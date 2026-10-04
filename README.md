@@ -1,52 +1,88 @@
-# Ability Runtime Seed
+# ability-runtime
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+Semantic 拆码垛联调用的 **Ability 运行时种子仓**。
 
-📦 Build inputs and an offline dependency cache for Semantic Robot Bundles. Despite its name, this repository is **not a running service**, a complete Robot Bundle, or the Ability source repository.
+把 AbilityFramework 二进制、scaffold / `ability_py` Wheel、以及 `r1pro-mujoco` 第三方 Wheel 缓存放在这里。开发者 clone + `git lfs pull` + `make setup` 之后，不必再找同事要文件，也不必再 `pip download`。
 
-## Contents
+本仓 **不是** 能力源码仓，也 **不是** 打好的活动 Robot Bundle。
 
-| Path | Use |
-|---|---|
-| `AbilityFramework` | Locally built Ability host |
-| `ability_py-*.whl` | Locally built Python Ability SDK |
-| `ability_scaffold-*.whl` | Locally built packaging tool |
-| `base-bundles/` | Bundle seed configuration and third-party Wheels |
-| `Makefile` | Presence checks and local scaffold environment setup |
+- 七类 Ability 源码：`semantic-ability/r1pro-ability`
+- 教学 / MockArm：`mcp-playground`（可选，联调不需要）
+- 活动 Bundle（Pilot / Ability zip / 本机 `python/venv`）：仍由 `semantic-framework` 的 `refresh_v050_mujoco.py` 现打
 
-## Prepare the inputs
+## 给谁用
 
-Use quick-start stages **2.3, 5.1, and 5.2**. They fetch third-party assets, build AbilityFramework/ability-py/ability-scaffold from source, validate the outputs, and copy them into this repository.
+Linux x86_64。Wheel 是 **cp313 manylinux**。macOS / ARM 拉下来也只能当缓存看，不能在本机起受管 Robot。
 
-For manual preparation, fetch only the remaining LFS assets:
+## 仓库里有什么
 
-```bash
-git lfs pull -X "AbilityFramework,**/AbilityFramework,ability_py-*.whl,**/ability_py-*.whl,ability_scaffold-*.whl,**/ability_scaffold-*.whl"
+```
+ability-runtime/
+├── AbilityFramework                 # Linux x86_64 静态 ELF
+├── ability_scaffold-1.2.0-*.whl     # 打包七类 Ability 用
+├── ability_py-0.4.0-*.whl           # Ability Python SDK
+├── Makefile                         # make setup 生成本机 .venv
+└── base-bundles/r1pro-mujoco-0.5.0-dev/
+    ├── bundle.yaml                  # 与 semantic-deployment 类型包一致
+    └── wheels/                      # 第三方 + ability_py + websockets
 ```
 
-Then copy the version-matched binary and Wheels from those three source builds. The SDK Wheel is needed both at the root and in the selected base bundle's `wheels/` directory. The public snapshot intentionally excludes these generated first-party files; do not run setup before building and copying them.
+`wheels/` 只放刷新脚本不会现打的依赖（numpy / pinocchio / ruckig / Flask 等）。产品 Wheel（Robot SDK、Ability、Skill SDK）不要放，脚本会从旁边的源码仓现打。
+
+`cmeel_urdfdom-4.0.0-2` 需要 `libtinyxml2.so.9`，PyPI 的 `cmeel_tinyxml2` 只有 so.11。种子仓用 `scripts/seal_cmeel_native_closure.py` 把 Debian `libtinyxml2-9` 打成 `cmeel_tinyxml2_9` Wheel，并给 urdfdom 写 `$ORIGIN` RUNPATH。刷新脚本会在 Bundle 入库后跑 `import pinocchio` + 隔离加载门禁，缺 so.9 直接失败。
+
+## 不要放什么
+
+| 东西 | 原因 |
+| --- | --- |
+| `.venv/` | 路径绑死本机，clone 后 `make setup` 生成 |
+| `.output/robot-bundles/` 活动包 | 含本机 Pilot、Ability zip、`python/venv`，要现打 |
+| 七类 Ability 源码 / zip | 在 `r1pro-ability` |
+| MockArm / phase-1..4 | 教学仓内容，联调用不上 |
+| 密钥、`.env`、实例数据 | 各人自己的 |
+
+## 怎么用
+
+放在 `$SEMANTIC` 下，目录名保持 `ability-runtime`：
 
 ```bash
-make check
+export SEMANTIC="$HOME/workspace/semantic"
+git clone https://github.com/insightos-community/semantic-ability/ability-runtime.git \
+  "$SEMANTIC/ability-runtime"
+cd "$SEMANTIC/ability-runtime"
+git lfs install
+git lfs pull
 make setup
 ```
 
-Setup requires uv and Python **3.13** and creates `.venv/` with ability-scaffold. `make check` only checks file presence; quick-start additionally validates Wheel archives and runs AbilityFramework's version check.
+`make setup` 会：
 
-## Use and troubleshoot
+1. `chmod +x AbilityFramework`
+2. 用本机 Python 3.13 建 `.venv`
+3. 把仓库里的 `ability_scaffold` Wheel 装进去
 
-The Framework refresh workflow consumes these inputs to create an active Robot Bundle. The current cache includes Linux x86_64 / CPython 3.13 native Wheels; it is not a cross-platform dependency set.
+之后刷新脚本会自己找：
 
-An “invalid wheel” error often indicates an LFS pointer or a missing source-build copy. A missing shared library can indicate an ABI mismatch; retain the bundle's pinned dependencies instead of upgrading individual Wheels blindly.
+- vendor：`$SEMANTIC/ability-runtime`（`AbilityFramework` + `.venv/bin/ability-scaffold`）
+- Wheel 缓存：`$SEMANTIC/ability-runtime/base-bundles/r1pro-mujoco-0.5.0-dev`
 
-Local `.venv/` and backup `*.lfs-orig` files are not release inputs. Cached Wheels retain their embedded licenses; see the [supplemental upstream notices](third-party-licenses/README.md).
+旧脚本如果还只认 `mcp-playground`，可以显式传：
 
-[Detailed seed reference](README.reference.md) · [Input checks](Makefile)
+```bash
+cd "$SEMANTIC/semantic-framework"
+PYTHON313=$(uv python find 3.13)
+"$PYTHON313" scripts/refresh_v050_mujoco.py build --activate --python "$PYTHON313" \
+  --vendor-root "$SEMANTIC/ability-runtime" \
+  --base-bundle "$SEMANTIC/ability-runtime/base-bundles/r1pro-mujoco-0.5.0-dev"
+```
 
-## License
+## 自检
 
-Copyright 2026 InsightOS. First-party code: [Apache-2.0](LICENSE). See [NOTICE](NOTICE) and [license scope](LICENSE_SCOPE.md) for third-party components and assets.
+```bash
+make check
+test -x AbilityFramework
+file AbilityFramework          # 应是 ELF 64-bit x86-64，不是 LFS 指针文本
+test -x .venv/bin/ability-scaffold
+```
 
-## Reproducible platform builds
-
-See [glibc, musl and macOS build instructions](README.build.md) for pinned source revisions, exact scripts, tool requirements, local commands, CI reproduction and platform support boundaries.
+`AbilityFramework` 大约 14MB，`base-bundles/.../wheels` 大约 100MB。如果只有几十个字节，是 LFS 没拉下来，再执行 `git lfs pull`。
